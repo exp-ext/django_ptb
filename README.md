@@ -2,7 +2,7 @@
 
 <p>Template for developing Telegram bot on Django with python-telegram-bot and Celery.</p
 
-![статус](https://github.com/exp-ext/django_ptb/actions/workflows/dptb.yml/badge.svg?event=push)
+![статус](https://github.com/exp-ext/django_ptb/actions/workflows/main.yml/badge.svg?event=push)
 
 <p align="center">
 <img src="https://github.com/exp-ext/django_ptb/blob/main/dptb/static/img/top-banner.jpg?raw=true" width="1200">
