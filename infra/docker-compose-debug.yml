@@ -1,0 +1,122 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:13.10-alpine
+    container_name: dptb_db
+    restart: unless-stopped
+    volumes:
+      - postgresql_volume:/var/lib/postgresql/data/
+    env_file:
+      - ./.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: dptb_redis
+    restart: always
+    expose:
+      - 6379
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: ../dptb/
+      dockerfile: Dockerfile_dev
+      args:
+        - ${DJANGO_SECRET_KEY}
+    container_name: dptb_web
+    restart: always
+    command: python manage.py runserver 0.0.0.0:8000
+    stdin_open: true
+    tty: true
+    volumes:
+      - static_volume:/app/static/:rw
+      - media_volume:/app/media/:rw
+      - cache_pip_volume:/root/.cache/pip/:rw
+      - cache_apt_volume:/var/cache/apt/archives/:rw
+      - ../dptb/:/app/:rw
+    expose:
+      - 8000
+    env_file:
+      - ./.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery:
+    build:
+      context: ../dptb/
+      dockerfile: Dockerfile_dev
+    container_name: dptb_celery
+    restart: always
+    command: bash -c "celery -A dptb worker --loglevel=INFO"
+    volumes:
+      - cache_pip_volume:/root/.cache/pip/:rw
+      - cache_apt_volume:/var/cache/apt/archives/:rw
+      - ../dptb/:/app/:rw
+    env_file:
+      - ./.env
+    depends_on:
+      - web
+
+  celery-beat:
+    build:
+      context: ../dptb/
+      dockerfile: Dockerfile_dev   
+    container_name: dptb_beat
+    restart: always
+    command: bash -c "celery -A dptb beat -l info --scheduler django_celery_beat.schedulers.DatabaseScheduler"
+    volumes:
+      - cache_pip_volume:/root/.cache/pip/:rw
+      - cache_apt_volume:/var/cache/apt/archives/:rw
+      - ../dptb/:/app/:rw
+    env_file:
+      - ./.env
+    depends_on:
+      - web
+      - celery      
+
+  nginx:
+    image: nginx:latest
+    container_name: dptb_nginx
+    volumes:
+      - ./nginx/:/etc/nginx/templates:rw
+      - static_volume:/var/html/static/:rw
+      - media_volume:/var/html/media/:rw
+    env_file:
+      - ./.env
+    ports:
+      - "80:80"
+    depends_on:
+      - web
+  
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: dptb_whisper
+    expose:
+      - 9000
+    environment:
+      - ASR_MODEL=base
+    volumes:
+      - whisper_volume:/root/.cache/whisper
+    depends_on:
+      - web
+
+volumes:
+  static_volume:
+  media_volume:
+  postgresql_volume:
+  cache_pip_volume:
+  cache_apt_volume:
+  whisper_volume:

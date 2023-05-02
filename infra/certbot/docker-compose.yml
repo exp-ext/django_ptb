@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  nginx:
+    image: nginx:latest
+    container_name: backend_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./:/etc/nginx/templates
+      - ./conf/:/etc/letsencrypt/
+      - ./www/:/var/www/certbot/
+    env_file:
+      - ../.env
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: backend_certbot
+    restart: unless-stopped    
+    volumes:
+      - ./conf/:/etc/letsencrypt/
+      - ./www/:/var/www/certbot/
