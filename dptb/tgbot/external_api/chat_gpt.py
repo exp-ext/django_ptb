@@ -140,11 +140,10 @@ class GetAnswerDavinci():
             .exclude(answer__in=[None, GetAnswerDavinci.ERROR_TEXT])
             .values('question', 'answer')
         )
-        count_value = 0
+        count_value = len(self.message_text)
         for item in history:
             count_value += len(item['question']) + len(item['answer'])
-            if (count_value + len(self.message_text)
-                    >= GetAnswerDavinci.MAX_LONG_REQUEST):
+            if count_value >= GetAnswerDavinci.MAX_LONG_REQUEST:
                 break
             self.prompt.extend([
                 {'role': 'user', 'content': item['question']},
@@ -200,7 +199,9 @@ class GetAnswerDavinci():
         return len(self.message_text) > GetAnswerDavinci.MAX_LONG_MESSAGE
 
 
-def for_check(update: Update, context: CallbackContext):
+async def for_check(update: Update,
+                    context: CallbackContext,
+                    get_answer: GetAnswerDavinci):
     answers_for_check = {
         '?': ('Я мог бы ответить Вам, если '
               f'[зарегистрируетесь]({context.bot.link}) 🧐'),
@@ -209,16 +210,18 @@ def for_check(update: Update, context: CallbackContext):
         '': ('Какая интересная беседа, [зарегистрируетесь]'
              f'({context.bot.link}) и я подключусь к ней 😇'),
     }
-    return check_registration(update, context, answers_for_check)
+    if await sync_to_async(check_registration)(
+            update, context, answers_for_check) is False:
+        return {'code': 401}
+    await get_answer.get_answer_davinci()
 
 
 def get_answer_davinci_public(update: Update, context: CallbackContext):
-    if for_check(update, context):
-        get_answer = GetAnswerDavinci(update, context)
-        asyncio.run(get_answer.get_answer_davinci())
+    get_answer = GetAnswerDavinci(update, context)
+    asyncio.run(for_check(update, context, get_answer))
 
 
 def get_answer_davinci_person(update: Update, context: CallbackContext):
-    if update.effective_chat.type == 'private' and for_check(update, context):
+    if update.effective_chat.type == 'private':
         get_answer = GetAnswerDavinci(update, context)
-        asyncio.run(get_answer.get_answer_davinci())
+        asyncio.run(for_check(update, context, get_answer))
