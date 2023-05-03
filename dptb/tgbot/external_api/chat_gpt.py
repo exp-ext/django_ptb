@@ -200,9 +200,7 @@ class GetAnswerDavinci():
         return len(self.message_text) > GetAnswerDavinci.MAX_LONG_MESSAGE
 
 
-async def for_check(update: Update,
-                    context: CallbackContext,
-                    get_answer: GetAnswerDavinci):
+def for_check(update: Update, context: CallbackContext):
     answers_for_check = {
         '?': ('Я мог бы ответить Вам, если '
               f'[зарегистрируетесь]({context.bot.link}) 🧐'),
@@ -211,18 +209,16 @@ async def for_check(update: Update,
         '': ('Какая интересная беседа, [зарегистрируетесь]'
              f'({context.bot.link}) и я подключусь к ней 😇'),
     }
-    if await sync_to_async(check_registration)(
-            update, context, answers_for_check) is False:
-        return {'code': 401}
-    await get_answer.get_answer_davinci()
+    return check_registration(update, context, answers_for_check)
 
 
 def get_answer_davinci_public(update: Update, context: CallbackContext):
-    get_answer = GetAnswerDavinci(update, context)
-    asyncio.run(for_check(update, context, get_answer))
+    if for_check(update, context):
+        get_answer = GetAnswerDavinci(update, context)
+        asyncio.run(get_answer.get_answer_davinci())
 
 
 def get_answer_davinci_person(update: Update, context: CallbackContext):
-    if update.effective_chat.type == 'private':
+    if update.effective_chat.type == 'private' and for_check(update, context):
         get_answer = GetAnswerDavinci(update, context)
-        asyncio.run(for_check(update, context, get_answer))
+        asyncio.run(get_answer.get_answer_davinci())
