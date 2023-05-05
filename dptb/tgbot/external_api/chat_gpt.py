@@ -3,9 +3,9 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import openai
+import tiktoken
 from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
-from django.shortcuts import get_object_or_404
 from dotenv import load_dotenv
 from telegram import ChatAction, ParseMode, Update
 from telegram.ext import CallbackContext
@@ -45,20 +45,35 @@ class GetAnswerDavinci():
         self.context = context
         self.user = None
         self.message_text = None
+        self.message_tokens = None
         self.current_time = None
         self.time_start = None
         self.answer_text = GetAnswerDavinci.ERROR_TEXT
+        self.answer_tokens = None
         self.event = asyncio.Event()
         self.prompt = [
             {
                 'role': 'system',
-                'content': ('You are the best Python programming assistant '
-                            'giving answers only to Markdown.')
+                'content': (
+                    'You are an experienced senior software developer with '
+                    'extensive experience leading teams, mentoring junior '
+                    'developers, and providing high-quality software '
+                    'solutions to customers, giving answers only in '
+                    'Markdown and preferably in plain Russian.'
+                )
             }
         ]
-        self.set_user()
-        self.set_message_text()
         self.set_windows_time()
+        self.set_message_text()
+        self.set_user()
+
+    @classmethod
+    def num_tokens_from_message(cls, message):
+        try:
+            encoding = tiktoken.encoding_for_model(GetAnswerDavinci.MODEL)
+        except KeyError:
+            encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(message)) + 4
 
     async def get_answer_davinci(self) -> dict:
         """Основная логика."""
@@ -78,11 +93,8 @@ class GetAnswerDavinci():
             return {'code': 400}
 
         try:
-
-            await self.get_prompt()
             asyncio.create_task(self.send_typing_periodically())
             await self.request_to_openai()
-
             asyncio.create_task(self.create_update_history_ai())
 
         except Exception as err:
@@ -120,14 +132,16 @@ class GetAnswerDavinci():
         """
         Делает запрос в OpenAI и выключает typing.
         """
+        self.get_prompt()
         answer = openai.ChatCompletion.create(
             model=GetAnswerDavinci.MODEL,
-            messages=self.prompt
+            messages=self.prompt,
+            temperature=0.1,
         )
         self.answer_text = answer.choices[0].message.get('content')
+        self.answer_tokens = self.num_tokens_from_message(self.answer_text)
         self.event.set()
 
-    @sync_to_async
     def get_prompt(self) -> None:
         """
         Prompt для запроса в OpenAI и модель user.
@@ -139,16 +153,24 @@ class GetAnswerDavinci():
                 created_at__range=[self.time_start, self.current_time]
             )
             .exclude(answer__in=[None, GetAnswerDavinci.ERROR_TEXT])
-            .values('question', 'answer')
+            .values('question', 'question_tokens', 'answer', 'answer_tokens')
         )
-        count_value = len(self.message_text)
+        max_tokens = self.message_tokens + 96
         for item in history:
-            count_value += len(item['question']) + len(item['answer'])
-            if count_value >= GetAnswerDavinci.MAX_LONG_REQUEST:
+            max_tokens += item['question_tokens'] + item['answer_tokens']
+            if max_tokens >= GetAnswerDavinci.MAX_LONG_REQUEST:
                 break
             self.prompt.extend([
-                {'role': 'user', 'content': item['question']},
-                {'role': 'assistant', 'content': item['answer']}
+                {
+                    'role': 'system',
+                    'name': self.user.username,
+                    'content': item['question']
+                },
+                {
+                    'role': 'system',
+                    'name': 'Eva',
+                    'content': item['answer']
+                }
             ])
         self.prompt.append({'role': 'user', 'content': self.message_text})
 
@@ -170,15 +192,18 @@ class GetAnswerDavinci():
         history_ai = HistoryAI(
             user=self.user,
             question=self.message_text,
-            answer=self.answer_text
+            question_tokens=self.message_tokens,
+            answer=self.answer_text,
+            answer_tokens=self.answer_tokens
         )
         await history_ai.save()
 
     def set_user(self) -> None:
         """Определяем и назначаем  атрибут user."""
-        self.user = get_object_or_404(
-            User,
-            username=self.update.effective_user.id
+        self.user = (
+            User.objects
+            .prefetch_related('history_ai')
+            .get(username=self.update.effective_user.id)
         )
 
     def set_message_text(self) -> str:
@@ -186,6 +211,7 @@ class GetAnswerDavinci():
         self.message_text = (
             self.update.effective_message.text.replace('#', '', 1)
         )
+        self.message_tokens = self.num_tokens_from_message(self.message_text)
 
     def set_windows_time(self) -> None:
         """Определяем и назначаем атрибуты current_time и time_start."""
@@ -197,7 +223,7 @@ class GetAnswerDavinci():
 
     @property
     def check_long_query(self) -> bool:
-        return len(self.message_text) > GetAnswerDavinci.MAX_LONG_MESSAGE
+        return self.message_tokens > GetAnswerDavinci.MAX_LONG_MESSAGE
 
 
 def for_check(update: Update, context: CallbackContext):
